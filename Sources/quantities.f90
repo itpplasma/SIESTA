@@ -323,6 +323,8 @@
       CALL assert(ALL(jacobh*signjac .gt. 0), 'FILTERED JACOBIAN CHANGED SIGN!')
 
       IF (iam .eq. 0 .and. lverbose) THEN
+         ! jacobf is not yet set here; compare against the unfiltered jacobian.
+         jacobf = RESHAPE(sqrtg, SHAPE(jacobh))
          sum1 = SUM((jacobh(:,:,2:) - jacobf(:,:,2:))**2 /                     &
                     (jacobh(:,:,2:) + jacobf(:,:,2:))**2)
          WRITE (*,1000) SQRT(sum1/SIZE(jacobh))
