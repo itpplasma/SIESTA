@@ -59,6 +59,9 @@
 !>  @table_section{siesta_grid_size_sec, Grid Sizes}
 !>     @item{nsin,       Size of plasma radial grid.,                            siesta_namelist::nsin}
 !>     @item{nsin_ext,   Size of extended radial grid.,                          siesta_namelist::nsin_ext}
+!>     @item{ext_edge_fac, Scale of the edge radial derivative in the quadratic
+!>                       extension to the vessel; lower it if the extended grid
+!>                       folds.,                                                 siesta_namelist::ext_edge_fac}
 !>     @item{ntor_type,  Type of toroidal modes. Available types are
 !>                       -# @fixed_width{'dense'}  Use all toroidal modes.
 !>                       -# @fixed_width{'sparse'} Use selected toroidal modes., siesta_namelist::ntor_type}
@@ -252,6 +255,8 @@
       INTEGER :: nsin = 101
 !>  Radial size of the extended grid.
       INTEGER :: nsin_ext = 0
+!>  Scale of the edge radial derivative in the extension to the vessel.
+      REAL(dp) :: ext_edge_fac = 0.5_dp
 !>  Type of toroidal modes.
       CHARACTER(LEN=siesta_namelist_name_length) :: ntor_type = 'dense'
 !>  Number of poloidal modes.
@@ -300,7 +305,8 @@
 !  Island parameters Island Parameters
         mres, HelPert, HelPhase,                                               &
 !  Input grid sizes
-        nsin, nsin_ext, ntor_type, mpolin, ntorin, nfpin, ntor_modes,          &
+        nsin, nsin_ext, ext_edge_fac, ntor_type, mpolin, ntorin, nfpin,        &
+        ntor_modes,                                                            &
 !  Output grid sizes
         nphis, nrs, nzs, nvs, nus, nss,                                        &
 !  File names

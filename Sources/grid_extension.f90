@@ -360,6 +360,8 @@
 !-------------------------------------------------------------------------------
       SUBROUTINE init_extender
 
+      USE siesta_namelist, ONLY: ext_edge_fac
+
       IMPLICIT NONE
 
 !  Local Variables.
@@ -376,8 +378,9 @@
 !  First derivatives on s=1 surface
       ALLOCATE(r1s_vmec(ntheta,nzeta),z1s_vmec(ntheta,nzeta))
 
-      fac =.5  !COULD SCAN THIS TO MAKE MAX(sqrt(g) < 0) IF NECESSARY
-!!    fac =.17  !COULD SCAN THIS TO MAKE MAX(sqrt(g) < 0) IF NECESSARY
+!  Too large a factor folds the grid near the vessel when the plasma-vessel gap
+!  is small compared with the edge derivative.
+      fac = ext_edge_fac
       r1s_vmec=(r1_vmec - r1_i(:,:,ns-1))*ohs*fac
       z1s_vmec=(z1_vmec - z1_i(:,:,ns-1))*ohs*fac
 
