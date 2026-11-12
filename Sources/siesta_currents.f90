@@ -140,6 +140,14 @@
             bsq(:,:,1) = 0
          END IF
 
+         IF (nmin .ne. 1 .and. .not.ALL(bsq(:,:,nmin:nmax) .gt. zero)) THEN
+            temp(1:3) = MINLOC(bsq(:,:,nmin:nmax))
+            WRITE (*,'(a,i5,a,es12.4,a,3i5,a,es12.4,a,i5,a,i5)')                &
+               ' cv_currents: rank ', iam, ' min BSQ ', MINVAL(bsq(:,:,nmin:nmax)), &
+               ' at (u,v,js) ', INT(temp(1)), INT(temp(2)), INT(temp(3)) + nmin - 1, &
+               ' jacobh there ', jacobh(INT(temp(1)),INT(temp(2)),INT(temp(3))+nmin-1), &
+               ' nmin ', nmin, ' nmax ', nmax
+         END IF
          CALL assert(nmin                   .eq. 1 .or.                        &
                      ALL(bsq(:,:,nmin:nmax) .gt. zero),                        &
                      'BSQ <= 0 in cv_currents!')
