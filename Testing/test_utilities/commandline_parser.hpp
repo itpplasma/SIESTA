@@ -26,6 +26,7 @@
 ///     @item3{@fixed_width{-min},          Y, Minimum radial value.}
 ///     @item3{@fixed_width{-max},          Y, Maximum radial value.}
 ///     @item3{@fixed_width{-relative},     N, Use relative error.}
+///     @item3{@fixed_width{-nsin},         N, Plasma surfaces of a free-boundary restart.}
 ///     @item3{@fixed_width{-dump},         N, Dump values to the screen.}
 ///     @item3{@fixed_width{-u},            Y, Poloidal angle to dump.}
 ///     @item3{@fixed_width{-v},            Y, Toroidal angle to dump.}
@@ -193,6 +194,7 @@ public:
         std::cout << "  -max          Y Maximum radial value.                                         " << std::endl;
         std::cout << "                                                                                " << std::endl;
         std::cout << "  -relative     N Use relative error.                                           " << std::endl;
+        std::cout << "  -nsin         N Plasma surfaces of a free-boundary restart.                   " << std::endl;
         std::cout << "                                                                                " << std::endl;
         std::cout << "  -dump         N Dump values to the screen.                                    " << std::endl;
         std::cout << "                                                                                " << std::endl;

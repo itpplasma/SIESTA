@@ -56,6 +56,14 @@
       LOGICAL, PRIVATE            :: lHessian
       REAL (dp), PRIVATE          :: bnorm = -1
       REAL (dp), PRIVATE          :: line_Bu
+!>  True while xc holds the full vector potential rather than a perturbation.
+      LOGICAL, PRIVATE            :: l_total
+!>  VMEC flux functions as the (0,0) A_u and A_v inside the plasma.
+      REAL (dp), DIMENSION(:), ALLOCATABLE, PRIVATE :: au00_vmec
+      REAL (dp), DIMENSION(:), ALLOCATABLE, PRIVATE :: av00_vmec
+!>  Full-mesh radial potential whose average recovers the VMEC lambda field.
+      REAL (dp), DIMENSION(:,:,:), ALLOCATABLE, PRIVATE :: as_vmec
+      REAL (dp), DIMENSION(:,:,:), ALLOCATABLE, PRIVATE :: as_asym_vmec
 
       REAL (dp), DIMENSION(:,:,:), ALLOCATABLE, PRIVATE :: Bsupsijh
       REAL (dp), DIMENSION(:,:,:), ALLOCATABLE, PRIVATE :: Bsupuijh
@@ -237,13 +245,27 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
          asubvmnf(m0 + moff,:,1) = 0
       END IF
       IF (nsmin .le. nsin) THEN
-!  This ensures the inital solution preseves the VMEC solution inside the last
-!  closed flux surface.
-!
-!  A_u = phi/2Pi -> A_u (m ≠ 0 and ≠ 0) = 0
-!  A_v = chi/2Pi -> A_v (m ≠ 0 and ≠ 0) = 0
-         asubumnf(m1 + moff:,:,:MIN(nsin, nsmax)) = 0
-         asubvmnf(m1 + moff:,:,:MIN(nsin, nsmax)) = 0
+!  Hold the VMEC field inside the last closed flux surface. In the gauge
+!  A = Phi grad(u) - chi grad(v) - Phi' lambda grad(s), A_u and A_v are the flux
+!  functions alone. Freeing any other plasma component lets the solve change the
+!  plasma field and its rotational transform (only m >= 1 of A_u, A_v used to be
+!  held). The plasma field itself is restored from VMEC in Init_Bfield.
+         asubsmnf(:,:,:MIN(nsin, nsmax)) = 0
+         asubumnf(:,:,:MIN(nsin, nsmax)) = 0
+         asubvmnf(:,:,:MIN(nsin, nsmax)) = 0
+         IF (l_total) THEN
+            IF (parity .eq. f_sin) THEN
+               asubsmnf(:,:,:MIN(nsin, nsmax)) =                              &
+                  as_vmec(:,:,:MIN(nsin, nsmax))
+               asubumnf(m0 + moff,n0 + noff,:MIN(nsin, nsmax)) =               &
+                  au00_vmec(:MIN(nsin, nsmax))
+               asubvmnf(m0 + moff,n0 + noff,:MIN(nsin, nsmax)) =               &
+                  av00_vmec(:MIN(nsin, nsmax))
+            ELSE
+               asubsmnf(:,:,:MIN(nsin, nsmax)) =                              &
+                  as_asym_vmec(:,:,:MIN(nsin, nsmax))
+            END IF
+         END IF
       END IF
 
 !  At s=0, the poloidal and toroidal flux are zero. This implies that the m=0,
@@ -426,6 +448,7 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
       SUBROUTINE CYL2VMEC_A(A_r, A_p, A_z, cA_s, cA_u, cA_v)
       USE shared_data, ONLY: lasym
       USE utilities, ONLY: to_half_mesh
+      USE siesta_namelist, ONLY: nsin
 
       IMPLICIT NONE
 
@@ -464,10 +487,10 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
          CALL get_e_s(rsij_h, zsij_h, rs, zs, f_sin)
       END IF
 
-      cA_s = A_r*rs(:,:,1:ns:ns-1) + A_z*zs(:,:,1:ns:ns-1)
-      cA_u = A_r*ru_i(:,:,1:ns:ns-1) + A_z*zu_i(:,:,1:ns:ns-1)
-      cA_v = A_r*rv_i(:,:,1:ns:ns-1) + A_z*zv_i(:,:,1:ns:ns-1)                 &
-           + A_p*r1_i(:,:,1:ns:ns-1)
+      cA_s = A_r*rs(:,:,nsin:ns:ns-nsin) + A_z*zs(:,:,nsin:ns:ns-nsin)
+      cA_u = A_r*ru_i(:,:,nsin:ns:ns-nsin) + A_z*zu_i(:,:,nsin:ns:ns-nsin)
+      cA_v = A_r*rv_i(:,:,nsin:ns:ns-nsin) + A_z*zv_i(:,:,nsin:ns:ns-nsin)     &
+           + A_p*r1_i(:,:,nsin:ns:ns-nsin)
 
       DEALLOCATE(rsij_h)
       DEALLOCATE(zsij_h)
@@ -602,6 +625,7 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
          fouruv = f_sin
       END IF
 
+!  Slot 1 receives the potential on the plasma boundary (see COMPUTE_FORCES).
       CALL fourier_context%tomnsp(cA_s, A_s(:,:,1:ns:ns-1), fours)
       CALL fourier_context%tomnsp(cA_u, A_u(:,:,1:ns:ns-1), fouruv)
       CALL fourier_context%tomnsp(cA_v, A_v(:,:,1:ns:ns-1), fouruv)
@@ -631,6 +655,64 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
       END SUBROUTINE
 
 !-------------------------------------------------------------------------------
+!>  @brief VMEC flux functions as the (0,0) vector potential in the plasma.
+!>
+!>  Integrates the half-mesh (0,0) contravariant field of Init_Bfield,
+!>  jB^u = -dA_v/ds and jB^v = dA_u/ds, outward from A = 0 on the axis, and
+!>  adds the VMEC boundary fluxes to the (0,0) wall potential, which INIT_A
+!>  holds relative to the plasma boundary.
+!-------------------------------------------------------------------------------
+      SUBROUTINE INIT_A_VMEC
+      USE metrics, ONLY: phipf_i, chipf_i
+      USE quantities, ONLY: signjac
+      USE vmec_info, ONLY: iflipj, lmns_i, lmnc_i
+      USE island_params, ONLY: fourier_context
+      USE siesta_namelist, ONLY: nsin
+      USE shared_data, ONLY: lasym
+
+      IMPLICIT NONE
+
+!  local variables
+      INTEGER   :: js
+      REAL (dp) :: fac
+      REAL (dp) :: phiph
+
+!  Start of executable code
+      ALLOCATE(au00_vmec(nsin), av00_vmec(nsin))
+      ALLOCATE(as_vmec(0:mpol,-ntor:ntor,nsin))
+      IF (lasym) THEN
+         ALLOCATE(as_asym_vmec(0:mpol,-ntor:ntor,nsin))
+         as_asym_vmec(:,:,1) = 0
+      END IF
+
+      fac = signjac*iflipj/fourier_context%orthonorm(m0,n0)
+      au00_vmec(1) = 0
+      av00_vmec(1) = 0
+      as_vmec(:,:,1) = 0
+      DO js = 2, nsin
+         au00_vmec(js) = au00_vmec(js - 1)                                     &
+                       + hs*fac*(phipf_i(js) + phipf_i(js - 1))/2
+         av00_vmec(js) = av00_vmec(js - 1)                                     &
+                       - hs*fac*(chipf_i(js) + chipf_i(js - 1))/2
+!  curl_ftoh averages A_s to the half mesh; retain its VMEC lambda term.
+         phiph = signjac*iflipj*(phipf_i(js) + phipf_i(js - 1))/2
+         as_vmec(:,:,js) = -2*phiph*lmns_i(:,:,js) - as_vmec(:,:,js - 1)
+         IF (lasym) THEN
+            as_asym_vmec(:,:,js) = -2*phiph*lmnc_i(:,:,js)                     &
+                                - as_asym_vmec(:,:,js - 1)
+         END IF
+      END DO
+
+      asubumncf(m0 + LBOUND(asubumncf,1),n0 + ntor + LBOUND(asubumncf,2),ns) = &
+         asubumncf(m0 + LBOUND(asubumncf,1),n0 + ntor + LBOUND(asubumncf,2),ns)&
+         + au00_vmec(nsin)
+      asubvmncf(m0 + LBOUND(asubvmncf,1),n0 + ntor + LBOUND(asubvmncf,2),ns) = &
+         asubvmncf(m0 + LBOUND(asubvmncf,1),n0 + ntor + LBOUND(asubvmncf,2),ns)&
+         + av00_vmec(nsin)
+
+      END SUBROUTINE
+
+!-------------------------------------------------------------------------------
 !>  @brief Initialize expected currents.
 !>
 !>  Up to the vmec last closed flux surface, initialize with the VMEC currents.
@@ -650,6 +732,7 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
 !-------------------------------------------------------------------------------
       SUBROUTINE INIT_F(Fsupsmn, Fsupumn, Fsupvmn, jcurrumn, jcurrvmn, parity)
       USE utilities, Only: set_bndy_fouier_m0, set_bndy_full_origin
+      USE siesta_namelist, ONLY: nsin
 
       IMPLICIT NONE
 
@@ -681,6 +764,13 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
       CALL set_bndy_fouier_m0(Fsupsmn, Fsupumn, Fsupvmn, parity)
       IF (nsmin .eq. 1) THEN
          CALL set_bndy_full_origin(Fsupsmn, Fsupumn, Fsupvmn, f_jac)
+      END IF
+
+!  No plasma equations are solved (see BoundaryConditions).
+      IF (nsmin .le. nsin) THEN
+         Fsupsmn(:,:,nsmin:MIN(nsin, nsmax)) = 0
+         Fsupumn(:,:,nsmin:MIN(nsin, nsmax)) = 0
+         Fsupvmn(:,:,nsmin:MIN(nsin, nsmax)) = 0
       END IF
 
 !  Smooth edge current gradient.
@@ -1057,12 +1147,8 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
          END DO
       END IF !iam = 0
 
-      chipf_i(1) = 0.0
-      phipf_i(1) = 0.0
-      DO is = 2, nsin - 1
-         chipf_i(is) = -(jbsupumnch(0,0,is + 1) + jbsupumnch(0,0,is))*0.5
-         phipf_i(is) = -(jbsupvmnch(0,0,is + 1) + jbsupvmnch(0,0,is))*0.5
-      END DO
+!  Inside the plasma chipf_i and phipf_i keep their VMEC values, which the
+!  held vector potential reproduces.
 
       CALL Compare_Current(Fsupsmnsf, Fsupumncf, Fsupvmncf,                    &
                            jcurrumnc, jcurrvmnc)
@@ -1131,6 +1217,11 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
 
 !  Start of executable code
       DEALLOCATE(xc0, gc0)
+      DEALLOCATE(au00_vmec, av00_vmec, as_vmec)
+      IF (ALLOCATED(as_asym_vmec)) THEN
+         DEALLOCATE(as_asym_vmec)
+      END IF
+      bnorm = -1
 
       IF (ALLOCATED(jacobmnch)) THEN
          DEALLOCATE(jacobmnch)
@@ -1210,6 +1301,8 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
 
       CALL COMPUTE_FORCES(.TRUE.)
       CALL gather_array(gc)
+!  CURLA_PCHELMS also sets held plasma entries on each rank.
+      CALL gather_array(xc)
 
       IF (iam .EQ. 0) THEN
          WRITE(*,1000) fsq_total, MAXVAL(ABS(gc)), SQRT(SUM(xc*xc))
@@ -1272,7 +1365,7 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
       SUBROUTINE COMPUTE_FORCES(lNLinear)
       USE shared_data, ONLY: neqs, siesta_curtor, lasym
       USE bmw_run, ONLY: bmw_exec
-      USE siesta_namelist, ONLY: wout_file, mgrid_file
+      USE siesta_namelist, ONLY: wout_file, mgrid_file, nsin
       USE island_params, ONLY: fourier_context
       USE v3_utilities, ONLY: assert_eq
 
@@ -1294,6 +1387,7 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
 !  Start of executable code
       nsmin = startglobrow
       nsmax = MIN(ns,endglobrow + 1)
+      l_total = lNLinear
 
 !  FIXME: All this initalizion should be somewhere else.
       IF (bnorm .LT. 0) THEN
@@ -1329,8 +1423,11 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
                   A_p(ntheta,nzeta,2),                                         &
                   A_z(ntheta,nzeta,2))
 
+!  The potential on the wall is taken relative to the plasma boundary, not the
+!  axis: the wall fluxes become the VMEC boundary fluxes plus the vacuum fluxes
+!  between boundary and wall (see INIT_A_VMEC).
          CALL bmw_exec(mgrid_file, wout_file,                                  &
-                       r1_i(:,:,1:ns:ns-1), z1_i(:,:,1:ns:ns-1),               &
+                       r1_i(:,:,nsin:ns:ns-nsin), z1_i(:,:,nsin:ns:ns-nsin),   &
                        dphi, A_r, A_p, A_z)
 
          ALLOCATE(cA_s(ntheta,nzeta,2),                                        &
@@ -1340,6 +1437,7 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
          DEALLOCATE(A_r, A_p, A_z)
 
          CALL INIT_A(cA_s, cA_u, cA_v, asubsmnsf, asubumncf, asubvmncf, f_sin)
+         CALL INIT_A_VMEC
          IF (lasym) THEN
             CALL INIT_A(cA_s, cA_u, cA_v, asubsmncf, asubumnsf, asubvmnsf,     &
                         f_cos)
@@ -1445,6 +1543,7 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
       SUBROUTINE BoundaryConditions(Fsupsmn, Fsupumn, Fsupvmn, iparity)
       USE hessian, ONLY: l_Compute_Hessian
       USE utilities, ONLY: set_bndy_fouier_m0, set_bndy_full_origin
+      USE siesta_namelist, ONLY: nsin
 
       IMPLICIT NONE
 
@@ -1471,6 +1570,14 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
       CALL set_bndy_fouier_m0(Fsupsmn, Fsupumn, Fsupvmn, iparity)
       IF (startglobrow .eq. 1) THEN
          CALL set_bndy_full_origin(Fsupsmn, Fsupumn, Fsupvmn, f_jac)
+      END IF
+
+!  The plasma vector potential is held (see CURLA_PCHELMS), so its equations
+!  are dropped and only the vacuum region is solved.
+      IF (startglobrow .le. nsin) THEN
+         Fsupsmn(:,:,startglobrow:MIN(nsin, endglobrow)) = 0
+         Fsupumn(:,:,startglobrow:MIN(nsin, endglobrow)) = 0
+         Fsupvmn(:,:,startglobrow:MIN(nsin, endglobrow)) = 0
       END IF
 
       END SUBROUTINE

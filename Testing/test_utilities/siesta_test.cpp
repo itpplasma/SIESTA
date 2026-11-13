@@ -409,7 +409,8 @@ int main(int argc, const char * argv[]) {
     const commandline_parser args(argc, argv);
 
     const vmec_quantities vmec(args.get<std::string> ("-wout_file"));
-    const siesta_quantities siesta(args.get<std::string> ("-restart_file"));
+    const siesta_quantities siesta(args.get<std::string> ("-restart_file"),
+                                   args.is_set("-nsin") ? args.get<size_t> ("-nsin") : 0);
 
     const std::string test_name = args.get<std::string> ("-test_name");
 

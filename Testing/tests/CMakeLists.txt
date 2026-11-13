@@ -7,4 +7,5 @@ add_subdirectory (siesta_lasym_test)
 
 add_subdirectory (siesta_vessel_test)
 add_subdirectory (siesta_stall_test)
+add_subdirectory (siesta_pchelms_test)
 add_subdirectory (siesta_vessel_lasym_test)

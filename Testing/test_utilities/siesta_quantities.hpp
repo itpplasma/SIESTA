@@ -69,15 +69,19 @@ public:
 ///  For now this only supports symmetric cases only.
 ///
 ///  @param[in] restart_file File name of a restart file.
+///  @param[in] nsin         Number of plasma surfaces of a free-boundary
+///                          restart, whose radial grid continues to the wall;
+///                          zero for a fixed-boundary restart.
 //------------------------------------------------------------------------------
-    siesta_quantities(const std::string &restart_file) :
+    siesta_quantities(const std::string &restart_file,
+                      const size_t nsin=0) :
     test_full(make_full()),
     r(load_fourier<full_grid, cosine> (restart_file, "rmnc_m_n_r_")),
     drds(to_prime(r)),
     z(load_fourier<full_grid, sine> (restart_file, "zmns_m_n_r_")),
     dzds(to_prime(z)),
-    phipf(load<full_grid> (restart_file, "phipf_r_")),
-    chipf(load<full_grid> (restart_file, "chipf_r_")),
+    phipf(load<full_grid> (restart_file, "phipf_r_", nsin)),
+    chipf(load<full_grid> (restart_file, "chipf_r_", nsin)),
     jbsups(load_fourier_denorm<half_grid, sine> (restart_file, "JBsupssh_m_n_r_")),
     djbsupsds(to_prime(jbsups)),
     jbsupu(load_fourier_denorm<half_grid, cosine> (restart_file, "JBsupuch_m_n_r_")),
@@ -117,11 +121,14 @@ public:
 ///
 ///  @param[in] restart_file File name of a siesta restart file.
 ///  @param[in] name          Name of the quantity to load.
+///  @param[in] nsin          Keep only the first nsin (plasma) surfaces if
+///                           nonzero.
 ///  @returns A constructed siesta grid quantity.
 //------------------------------------------------------------------------------
     template<class GIRD_CLASS>
     static siesta_grid<GIRD_CLASS> load(const std::string &restart_file,
-                                        const std::string &name) {
+                                        const std::string &name,
+                                        const size_t nsin=0) {
         int ncid;
         int status = nc_open(restart_file.c_str(), NC_NOWRITE, &ncid);
         if (status) {
@@ -139,6 +146,10 @@ public:
         nc_get_var(ncid, varid, temp.data());
 
         nc_close(ncid);
+
+        if (nsin > 0 && nsin < temp.size()) {
+            temp.resize(nsin);
+        }
 
         return siesta_grid<GIRD_CLASS> (temp);
     }
