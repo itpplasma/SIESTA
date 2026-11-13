@@ -46,6 +46,9 @@
       LOGICAL                              :: l_Gmres
 !>  Conjugate gradient iteration.
       LOGICAL                              :: l_conjmin
+!>  The force residual stopped decreasing with the Levenberg parameter at its
+!>  maximum.
+      LOGICAL                              :: l_stalled = .false.
 
 !>  Average number of funct_island calls per process.
       INTEGER                              :: nfun_calls
@@ -211,6 +214,14 @@
          l_iterate = niter      .lt. niter_max .and.                           &
                      fsq_total1 .gt. ftol
 
+!  The restart file already holds the state of least force residual.
+         IF (l_stalled) THEN
+            IF (iam .eq. 0 .and. lverbose) THEN
+               WRITE (*,1002) fsq_min
+            END IF
+            l_iterate = .false.
+         END IF
+
          IF (.not.l_conjmin .and. .not.l_gmres) THEN
             IF (iam .eq. 0 .and. lverbose) THEN
                WRITE (*,1000)
@@ -256,6 +267,8 @@
 
 1000  FORMAT(' CONJ GRADIENT UNABLE TO MAKE PROGRESS')
 1001  FORMAT(' FSQ RATIO: ',1p,e10.2, ' SIESTA CAN NOT CONVERGE FURTHER!')
+1002  FORMAT(' FORCE RESIDUAL DOES NOT DECREASE AT THE MAXIMUM LEVENBERG',      &
+             ' PARAMETER; STOPPING AT F^2 = ',1p,e10.3)
 
       END SUBROUTINE
 
@@ -432,13 +445,11 @@
          IF (fsq_last .le. fsq_total1) THEN
 			failed_min_count = failed_min_count + 1	
             IF (failed_min_count .eq. 3) THEN
-				levmarq_param0 = MAX(levmarq_param0*3,levmarq_max)
+!  The Levenberg parameter grows to its maximum and no further: with MAX it
+!  grew without bound and the preconditioned step underflowed to NaN.
+				l_stalled = levmarq_param0 .ge. levmarq_max
+				levmarq_param0 = MIN(levmarq_param0*3,levmarq_max)
 				failed_min_count = 0
-! TODO: Implement a check in which if the LM parameter has reached the max
-! value keep a counter, and when said counter has reached a certain number,
-! say 3, then stop itterating and write out all data to restart file with 
-! a note how the fsq would not lower any further. I am unsure how to do this
-! last part. -GWS
 			END IF
 			levmarq_param = levmarq_param0
 			
@@ -452,7 +463,8 @@
 		 IF (fsq_last .le. fsq_total1) THEN
 			failed_min_count = failed_min_count + 1	
             IF (failed_min_count .eq. 3) THEN
-				levmarq_param0 = MAX(levmarq_param0*3,levmarq_max)
+				l_stalled = levmarq_param0 .ge. levmarq_max
+				levmarq_param0 = MIN(levmarq_param0*3,levmarq_max)
 				failed_min_count = 0
 			END IF
 			levmarq_param = levmarq_param0

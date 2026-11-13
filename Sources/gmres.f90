@@ -361,6 +361,8 @@
       INTEGER               :: myrowstart, myrowend, istat
       REAL(dp), ALLOCATABLE :: p(:)
       REAL(dp)              :: delta, skston, skstoff
+      REAL(dp)              :: Ap0(nloc)
+      LOGICAL               :: lzero, lnonzero
 !-----------------------------------------------
 !SPH NOTE 032713: EVENTUALLY REMOVE CALL TO ParMatVec IF THE FUNCT_ISLAND IS FASTER
 !
@@ -405,7 +407,23 @@
 
       DEALLOCATE (p)
 
+      Ap0 = Ap
       WHERE (ABS(Ap) .LT. 1.E-10_dp) Ap = 0
+
+!  Never return an all-zero product for a nonzero p: the Arnoldi step in dgmres
+!  divides by its norm, and NaN then fills the state. This happens once the
+!  preconditioned vectors are small, i.e. at a large Levenberg parameter.
+      lzero = ALL(Ap .EQ. 0)
+      lnonzero = ANY(ploc .NE. 0)
+#if defined(MPI_OPT)
+      CALL MPI_ALLREDUCE(MPI_IN_PLACE, lzero, 1, MPI_LOGICAL, MPI_LAND,        &
+                         SIESTA_COMM, MPI_ERR)
+      CALL MPI_ALLREDUCE(MPI_IN_PLACE, lnonzero, 1, MPI_LOGICAL, MPI_LOR,      &
+                         SIESTA_COMM, MPI_ERR)
+#endif
+      IF (lzero .AND. lnonzero) THEN
+         Ap = Ap0
+      END IF
 
       CALL second0(skstoff)
 
@@ -454,7 +472,9 @@
          Ap = (gc-gc0)/delta
       END IF
 
-      WHERE (ABS(Ap) .LT. 1.E-10_dp) Ap = 0
+      IF (ANY(ABS(Ap) .GE. 1.E-10_dp)) THEN
+         WHERE (ABS(Ap) .LT. 1.E-10_dp) Ap = 0
+      END IF
 
       END SUBROUTINE matvec
 
