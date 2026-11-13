@@ -1,0 +1,9 @@
+! Asymmetric extension regression; external coils are not a matched equilibrium.
+ &SIESTA_INFO
+ LADD_PERT = F, LRESISTIVE = F, LRESTART = F, LRECON = F, LASYM = T, LCOLSCALE = T,
+ NITER = 1, FTOL = 1.E-20, LEVMARQ_PARAM = 1.0E-1, MUPAR = 0.0,
+ NSIN = 25, NSIN_EXT = 20, MPOLIN = 5, NTORIN = 4, NFPIN = 0,
+ L_VESSEL = T, EXT_EDGE_FAC = 0.05, VESSEL_FILE = 'vessel.test', MGRID_FILE = 'mgrid_test.nc',
+ WOUT_FILE = '@CMAKE_CURRENT_BINARY_DIR@/wout_test.vmec.nc', RESTART_EXT = 'test',
+ L_TRACING = F,
+ /
