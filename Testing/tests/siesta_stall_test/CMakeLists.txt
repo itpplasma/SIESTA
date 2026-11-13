@@ -24,4 +24,5 @@ set_tests_properties (siesta_stall_siesta_test
                       PROPERTIES
                       DEPENDS siesta_stall_vmec_test
                       PROCESSORS $<TARGET_PROPERTY:stell,MPIEXEC_MAX_NUMPROCS>
+                      PASS_REGULAR_EXPRESSION "FORCE RESIDUAL DOES NOT DECREASE"
                       FAIL_REGULAR_EXPRESSION "NaN|BSQ <= 0")

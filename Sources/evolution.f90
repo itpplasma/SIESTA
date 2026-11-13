@@ -117,6 +117,7 @@
 
 !  Call evolve until fsq_ratio stops decreasing.
       l_iterate = .true.
+      l_stalled = .false.
       l_Gmres   = .true.
       nprecon_type = PREDIAG
 
