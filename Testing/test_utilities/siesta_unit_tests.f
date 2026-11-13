@@ -29,6 +29,11 @@
          WRITE (*,*) 'test_fourier failed.'
       END IF
 
+      IF (.not.test_fourier_direct()) THEN
+         WRITE (*,*) 'test_fourier_direct failed.'
+         test_passed = .false.
+      END IF
+
       IF (.not.test_passed) THEN
          CALL exit(1)
       END IF
