@@ -22,7 +22,9 @@ add_test (NAME    siesta_pchelms_siesta_test
 set_tests_properties (siesta_pchelms_siesta_test
                       PROPERTIES
                       DEPENDS siesta_pchelms_vmec_test
-                      PROCESSORS $<TARGET_PROPERTY:stell,MPIEXEC_MAX_NUMPROCS>)
+                      PROCESSORS $<TARGET_PROPERTY:stell,MPIEXEC_MAX_NUMPROCS>
+                      PASS_REGULAR_EXPRESSION "PCHELMS PLASMA FIELD RELATIVE ERROR:"
+                      FAIL_REGULAR_EXPRESSION "PCHELMS plasma field differs from VMEC")
 
 #  Inside the plasma the start state keeps the VMEC rotational transform, and
 #  the current enclosed by the wall is the VMEC current.

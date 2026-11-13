@@ -469,6 +469,7 @@
       USE siesta_namelist, ONLY: l_vessel, nsin
       USE utilities, ONLY: set_bndy_fouier_m0, set_bndy_full_origin
       USE island_params, ONLY: fourier_context
+      USE mpi_inc
 
       IMPLICIT NONE
 
@@ -491,8 +492,14 @@
       INTEGER                                                 :: sparity
       INTEGER                                                 :: mp
       INTEGER                                                 :: np
+      REAL(dp)                                                :: bu
+      REAL(dp)                                                :: bv
+      REAL(dp)                                                :: field_error
+      REAL(dp)                                                :: field_norm
 
 !  Start of executable code.
+      field_error = 0
+      field_norm = 0
       IF (parity .eq. f_sin) THEN
          sparity = 1
       ELSE
@@ -503,29 +510,49 @@
 !  the field is VMEC's, as without a vessel.
       DO i = nsmin, nsmax
          IF (.not.l_vessel .or. i .le. nsin) THEN
-            jbsupsmnh(:,:,i) = 0
             DO n = -ntor, ntor
                n_mode = fourier_context%tor_modes(n)
                np = n_mode*nfp*sparity
                DO m = 0, mpol
                   mp = m*sparity
-                  jbsupumnh(m,n,i) = phiph(i)*(-np*lmn(m,n,i))
-                  jbsupvmnh(m,n,i) = phiph(i)*( mp*lmn(m,n,i))
+                  bu = phiph(i)*(-np*lmn(m,n,i))
+                  bv = phiph(i)*( mp*lmn(m,n,i))
+                  IF (parity .eq. f_sin .and. m .eq. m0 .and. n .eq. n0) THEN
+                     bu = chiph(i)/fourier_context%orthonorm(m0,n0)
+                     bv = phiph(i)/fourier_context%orthonorm(m0,n0)
+                  END IF
+!  Check the actual curl before replacing it by the direct VMEC expression.
+                  IF (l_vessel .and. i .gt. 1) THEN
+                     field_error = MAX(field_error,                          &
+                        ABS(jbsupsmnh(m,n,i)),                                &
+                        ABS(jbsupumnh(m,n,i) - bu),                           &
+                        ABS(jbsupvmnh(m,n,i) - bv))
+                     field_norm = MAX(field_norm, ABS(bu), ABS(bv))
+                  END IF
+                  jbsupsmnh(m,n,i) = 0
+                  jbsupumnh(m,n,i) = bu
+                  jbsupvmnh(m,n,i) = bv
                END DO
             END DO
-
-            IF (parity .eq. f_sin) THEN
-               jbsupumnh(m0,n0,i) = chiph(i)                                   &
-                                  / fourier_context%orthonorm(m0,n0)
-               jbsupvmnh(m0,n0,i) = phiph(i)                                   &
-                                  / fourier_context%orthonorm(m0,n0)
-            END IF
          END IF
       END DO
-      IF (.not.l_vessel) THEN
+      IF (l_vessel) THEN
+#if defined(MPI_OPT)
+         CALL MPI_ALLREDUCE(MPI_IN_PLACE, field_error, 1, MPI_REAL8,          &
+                            MPI_MAX, SIESTA_COMM, MPI_ERR)
+         CALL MPI_ALLREDUCE(MPI_IN_PLACE, field_norm, 1, MPI_REAL8,           &
+                            MPI_MAX, SIESTA_COMM, MPI_ERR)
+#endif
+         field_error = field_error/MAX(field_norm, TINY(field_norm))
+         IF (iam .eq. 0 .and. lverbose) THEN
+            WRITE (*,1000) field_error
+         END IF
+         CALL assert(field_error .le. 1.0E-10_dp,                            &
+                     'PCHELMS plasma field differs from VMEC')
+      ELSE
          jbsupsmnh = 0
       END IF
-        
+
       jbsupsmnh(:,:,nsmin:nsmax) = b_factor*jbsupsmnh(:,:,nsmin:nsmax)
       jbsupumnh(:,:,nsmin:nsmax) = b_factor*jbsupumnh(:,:,nsmin:nsmax)
       jbsupvmnh(:,:,nsmin:nsmax) = b_factor*jbsupvmnh(:,:,nsmin:nsmax)
@@ -541,6 +568,8 @@
 
          CALL set_bndy_full_origin(jbsupsmnh, jbsupumnh, jbsupvmnh, f_jac)
       END IF
+
+1000  FORMAT(' PCHELMS PLASMA FIELD RELATIVE ERROR: ',1p,e12.4)
 
       END SUBROUTINE
 
