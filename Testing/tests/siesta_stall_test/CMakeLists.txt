@@ -22,12 +22,16 @@ set_tests_properties (siesta_stall_vmec_test
                       FIXTURES_SETUP siesta_stall_vmec
                       PROCESSORS $<TARGET_PROPERTY:stell,MPIEXEC_MAX_NUMPROCS>)
 add_test (NAME    siesta_stall_siesta_test
-          COMMAND $<TARGET_PROPERTY:stell,MPIEXEC_EXECUTABLE> $<TARGET_PROPERTY:stell,MPIEXEC_NUMPROC_FLAG> $<TARGET_PROPERTY:stell,MPIEXEC_MAX_NUMPROCS> $<TARGET_PROPERTY:xsiesta,BINARY_DIR>/xsiesta)
+          COMMAND ${CMAKE_COMMAND}
+                  "-DMPIEXEC=$<TARGET_PROPERTY:stell,MPIEXEC_EXECUTABLE>"
+                  "-DNUMPROC_FLAG=$<TARGET_PROPERTY:stell,MPIEXEC_NUMPROC_FLAG>"
+                  "-DNUMPROC=$<TARGET_PROPERTY:stell,MPIEXEC_MAX_NUMPROCS>"
+                  "-DXSIESTA=$<TARGET_PROPERTY:xsiesta,BINARY_DIR>/xsiesta"
+                  -P ${CMAKE_CURRENT_SOURCE_DIR}/check_stall.cmake)
 #  The run must stop at its force-residual floor without producing NaN.
 set_tests_properties (siesta_stall_siesta_test
                       PROPERTIES
                       DEPENDS siesta_stall_vmec_test
                       FIXTURES_REQUIRED siesta_stall_vmec
                       PROCESSORS $<TARGET_PROPERTY:stell,MPIEXEC_MAX_NUMPROCS>
-                      PASS_REGULAR_EXPRESSION "FORCE RESIDUAL DOES NOT DECREASE"
                       FAIL_REGULAR_EXPRESSION "NaN|Infinity|BSQ <= 0")
