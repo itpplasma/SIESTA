@@ -113,6 +113,12 @@
          REAL (dp), DIMENSION(:,:), POINTER :: workin1 => null()
 !>  Working buffer for second in terms.
          REAL (dp), DIMENSION(:,:), POINTER :: workin2 => null()
+!>  Working buffer for normalized mn terms.
+         REAL (dp), DIMENSION(:,:), POINTER :: workmn => null()
+!>  Working buffer for cosine nv sums.
+         REAL (dp), DIMENSION(:,:), POINTER :: workcn => null()
+!>  Working buffer for sine nv sums.
+         REAL (dp), DIMENSION(:,:), POINTER :: worksn => null()
 !>  Toroidal mode numbers.
          INTEGER, DIMENSION(:), POINTER     :: tor_modes => null()
 !>  Found modes resonances.
@@ -299,6 +305,9 @@
       ALLOCATE(fourier_construct%workmj2(0:mpol,nzeta))
       ALLOCATE(fourier_construct%workin1(ntheta,-ntor:ntor))
       ALLOCATE(fourier_construct%workin2(ntheta,-ntor:ntor))
+      ALLOCATE(fourier_construct%workmn(0:mpol,-ntor:ntor))
+      ALLOCATE(fourier_construct%workcn(0:mpol,0:ntor))
+      ALLOCATE(fourier_construct%worksn(0:mpol,0:ntor))
       ALLOCATE(fourier_construct%tor_modes(-ntor:ntor))
       ALLOCATE(fourier_construct%found_modes(0:mpol,-ntor:ntor))
 
@@ -398,6 +407,21 @@
       IF (ASSOCIATED(this%workin2)) THEN
          DEALLOCATE(this%workin2)
          this%workin2 => null()
+      END IF
+
+      IF (ASSOCIATED(this%workmn)) THEN
+         DEALLOCATE(this%workmn)
+         this%workmn => null()
+      END IF
+
+      IF (ASSOCIATED(this%workcn)) THEN
+         DEALLOCATE(this%workcn)
+         this%workcn => null()
+      END IF
+
+      IF (ASSOCIATED(this%worksn)) THEN
+         DEALLOCATE(this%worksn)
+         this%worksn => null()
       END IF
 
       IF (ASSOCIATED(this%tor_modes)) THEN
@@ -550,7 +574,7 @@
 !>  @param[out]   xmn    Real space quantity.
 !>  @param[in]    parity Fourier parity flag.
 !-------------------------------------------------------------------------------
-      PURE SUBROUTINE fourier_tomnsp_2d(this, xuv, xmn, parity)
+      SUBROUTINE fourier_tomnsp_2d(this, xuv, xmn, parity)
 
       IMPLICIT NONE
 
@@ -582,7 +606,7 @@
 !>  @param[in]    parity Fourier parity flag.
 !>  @param[in]    asym   Add stellarator asymmetric terms.
 !-------------------------------------------------------------------------------
-      PURE SUBROUTINE fourier_tomnsp_2d_pest(this, xuv, xmn, lambda, dupdu,    &
+      SUBROUTINE fourier_tomnsp_2d_pest(this, xuv, xmn, lambda, dupdu,    &
                                              parity, asym)
 
       IMPLICIT NONE
@@ -614,7 +638,7 @@
 !>  @param[inout] this A @ref fourier_class instance.
 !>  @param[in]    xuv  Fourier space quantity.
 !-------------------------------------------------------------------------------
-      PURE SUBROUTINE fourier_tomnsp_2d_u(this, xuv)
+      SUBROUTINE fourier_tomnsp_2d_u(this, xuv)
 
       IMPLICIT NONE
 
@@ -623,19 +647,22 @@
       REAL (dp), DIMENSION(:,:), INTENT(in) :: xuv
 
 !  Local Variables
-      INTEGER                               :: j
-      INTEGER                               :: m
+      INTEGER                               :: nm
+      INTEGER                               :: nu
+      INTEGER                               :: nj
 
 !  Start of executable code.
 
 !  First, add over poloidal collocation angles. Note use of cosmui/sinmui
-!  include normalization factors.
-      DO j = 1, SIZE(xuv, 2) !  nzeta
-         DO m = m0, UBOUND(this%cosmu, 2) !  mpol
-            this%workmj1(m,j) = DOT_PRODUCT(xuv(:,j), this%cosmui(:,m))
-            this%workmj2(m,j) = DOT_PRODUCT(xuv(:,j), this%sinmui(:,m))
-         END DO
-      END DO
+!  include normalization factors. These small dense products dominate the
+!  Hessian assembly, so they go to BLAS rather than to loops of dot products.
+      nm = SIZE(this%cosmu, 2)
+      nu = SIZE(xuv, 1)
+      nj = SIZE(xuv, 2)
+      CALL DGEMM('T', 'N', nm, nj, nu, one, this%cosmui,                       &
+                 SIZE(this%cosmui, 1), xuv, nu, zero, this%workmj1, nm)
+      CALL DGEMM('T', 'N', nm, nj, nu, one, this%sinmui,                       &
+                 SIZE(this%sinmui, 1), xuv, nu, zero, this%workmj2, nm)
 
       END SUBROUTINE
 
@@ -734,7 +761,7 @@
 !>  @param[out] xmn    Real space quantity.
 !>  @param[in]  parity Fourier parity flag.
 !-------------------------------------------------------------------------------
-      PURE SUBROUTINE fourier_tomnsp_2d_v(this, xmn, parity)
+      SUBROUTINE fourier_tomnsp_2d_v(this, xmn, parity)
 
       IMPLICIT NONE
 
@@ -744,92 +771,48 @@
       INTEGER, INTENT(in)                    :: parity
 
 !  Local Variables
-      REAL (dp)                               :: workcos
-      REAL (dp)                               :: worksin
-      REAL (dp)                               :: tempcos
-      REAL (dp)                               :: tempsin
-      INTEGER                                 :: j
-      INTEGER                                 :: m
       INTEGER                                 :: n
+      INTEGER                                 :: nm
+      INTEGER                                 :: nj
+      INTEGER                                 :: nn
       INTEGER                                 :: moff
       INTEGER                                 :: noff
+      INTEGER                                 :: mmax
+      INTEGER                                 :: ntor
 
 !  Start of executable code.
       moff = LBOUND(xmn,1)
-      noff = LBOUND(xmn,2) + UBOUND(this%cosnv,2)
+      ntor = UBOUND(this%cosnv,2)
+      noff = LBOUND(xmn,2) + ntor
+      mmax = UBOUND(this%cosmu, 2)
+      nm = mmax + 1
+      nj = SIZE(this%cosnv, 1)
+      nn = ntor + 1
 
-!  Then add over toroidal collocation angles.
-      xmn(:,:) = 0
+!  Then add over toroidal collocation angles. workcn and worksn hold the cosine
+!  and sine nv sums for n >= 0; the n < 0 modes follow from their symmetry.
       IF (parity .eq. f_cos) THEN
-         DO j = 1, SIZE(this%cosnv, 1) !  nzeta
-            tempcos = this%cosnv(j,n0)
-            tempsin = this%sinnv(j,n0)
-            DO m = m0, UBOUND(this%cosmu, 2) ! mpol
-               workcos = this%workmj1(m,j)*tempcos
-               worksin = this%workmj2(m,j)*tempsin
-
-               xmn(m + moff,n0 + noff) = xmn(m + moff,n0 + noff)               &
-                                       + workcos - worksin
-            END DO
-         END DO
-
-         DO n = n1, UBOUND(this%cosnv, 2) !  ntor
-            DO j = 1, SIZE(this%cosnv, 1) !  nzeta
-               workcos = this%workmj1(m0,j)*this%cosnv(j,n)
-               worksin = this%workmj2(m0,j)*this%sinnv(j,n)
-
-               xmn(m0 + moff,n + noff) = xmn(m0 + moff,n + noff)               &
-                                       + workcos - worksin
-
-               tempcos = this%cosnv(j,n)
-               tempsin = this%sinnv(j,n)
-               DO m = m1, UBOUND(this%cosmu, 2) ! mpol
-                  workcos = this%workmj1(m,j)*tempcos
-                  worksin = this%workmj2(m,j)*tempsin
-
-                  xmn(m + moff,n + noff) = xmn(m + moff,n + noff)              &
-                                         + workcos - worksin
-                  xmn(m + moff,-n + noff) = xmn(m + moff,-n + noff)            &
-                                          + workcos + worksin
-               END DO
-            END DO
-         END DO
-         xmn(m0 + moff,:-n1 + noff) = zero
+         CALL DGEMM('N', 'N', nm, nn, nj, one, this%workmj1, nm, this%cosnv,   &
+                    nj, zero, this%workcn, nm)
+         CALL DGEMM('N', 'N', nm, nn, nj, one, this%workmj2, nm, this%sinnv,   &
+                    nj, zero, this%worksn, nm)
       ELSE
-         DO j = 1, SIZE(this%cosnv, 1) !  nzeta
-            tempcos = this%cosnv(j,n0)
-            tempsin = this%sinnv(j,n0)
-            DO m = m0, UBOUND(this%cosmu, 2) ! mpol
-               workcos = this%workmj2(m,j)*tempcos
-               worksin = this%workmj1(m,j)*tempsin
+         CALL DGEMM('N', 'N', nm, nn, nj, one, this%workmj2, nm, this%cosnv,   &
+                    nj, zero, this%workcn, nm)
+         CALL DGEMM('N', 'N', nm, nn, nj, one, this%workmj1, nm, this%sinnv,   &
+                    nj, zero, this%worksn, nm)
+         this%worksn = -this%worksn
+      END IF
 
-               xmn(m + moff,n0 + noff) = xmn(m + moff,n0 + noff)               &
-                                       + workcos + worksin
-            END DO
-         END DO
-
-         DO n = n1, UBOUND(this%cosnv, 2) !  ntor
-            DO j = 1, SIZE(this%cosnv, 1) !  nzeta
-               workcos = this%workmj2(m0,j)*this%cosnv(j,n)
-               worksin = this%workmj1(m0,j)*this%sinnv(j,n)
-
-               xmn(m0 + moff,n + noff) = xmn(m0 + moff,n + noff)               &
-                                       + workcos + worksin
-
-               tempcos = this%cosnv(j,n)
-               tempsin = this%sinnv(j,n)
-               DO m = m1, UBOUND(this%cosmu, 2) ! mpol
-                  workcos = this%workmj2(m,j)*tempcos
-                  worksin = this%workmj1(m,j)*tempsin
-
-                  xmn(m + moff,n + noff) = xmn(m + moff,n + noff)              &
-                                         + workcos + worksin
-                  xmn(m + moff,-n + noff) = xmn(m + moff,-n + noff)            &
-                                          + workcos - worksin
-               END DO
-            END DO
-         END DO
-         xmn(m0 + moff,:n0 + noff) = zero
+      xmn(:,:) = 0
+      xmn(m0 + moff:mmax + moff,n0 + noff:ntor + noff) =                       &
+         this%workcn - this%worksn
+      DO n = n1, ntor
+         xmn(m1 + moff:mmax + moff,-n + noff) = this%workcn(m1:,n)             &
+                                              + this%worksn(m1:,n)
+      END DO
+      IF (parity .eq. f_sin) THEN
+         xmn(m0 + moff,n0 + noff) = zero
       END IF
 
       xmn = this%orthonorm*xmn
@@ -893,7 +876,7 @@
 !>  @param[in]    dflag  Derivative and sum control flags.
 !>  @param[in]    parity Fourier parity flag.
 !-------------------------------------------------------------------------------
-      PURE SUBROUTINE fourier_toijsp_2d(this, xmn, xuv, dflag, parity)
+      SUBROUTINE fourier_toijsp_2d(this, xmn, xuv, dflag, parity)
 
       IMPLICIT NONE
 
@@ -906,11 +889,13 @@
 
 !  Local Variables
       INTEGER                                  :: j
-      INTEGER                                  :: m
       INTEGER                                  :: n
       INTEGER                                  :: moff
       INTEGER                                  :: noff
-      REAL (dp)                                :: workmn
+      INTEGER                                  :: mmax
+      INTEGER                                  :: ntor
+      INTEGER                                  :: nu
+      INTEGER                                  :: nj
       REAL (dp), DIMENSION(:,:), POINTER       :: anglem1
       REAL (dp), DIMENSION(:,:), POINTER       :: anglem2
       INTEGER                                  :: msign
@@ -921,8 +906,12 @@
       INTEGER                                  :: nsign3
 
 !  Start of executable code.
+      mmax = UBOUND(this%cosmu, 2)
+      ntor = UBOUND(this%cosnv, 2)
       moff = LBOUND(xmn,1)
-      noff = LBOUND(xmn,2) + UBOUND(this%cosnv,2)
+      noff = LBOUND(xmn,2) + ntor
+      nu = SIZE(this%cosmu, 1)
+      nj = SIZE(xuv, 2)
 
 !  Poloidal derivative requested use cosmum, sinmum.
       IF (BTEST(dflag, b_du)) THEN
@@ -935,18 +924,14 @@
          msign = 1
       END IF
 
-      this%workin1 = 0
-      this%workin2 = 0
-
-!  Sum over poloidal angles.
-      DO n = LBOUND(this%workin1, 2), UBOUND(this%workin1, 2) !  -ntor:ntor
-         DO m = 0, UBOUND(this%cosmu, 2) !  mpol
-            workmn = this%orthonorm(m,n)*xmn(m + moff,n + noff)
-
-            this%workin1(:,n) = this%workin1(:,n) + msign*workmn*anglem1(:,m)
-            this%workin2(:,n) = this%workin2(:,n) + workmn*anglem2(:,m)
-         END DO
-      END DO
+!  Sum over poloidal angles. These small dense products dominate the Hessian
+!  assembly, so they go to BLAS rather than to loops of axpy updates.
+      this%workmn = this%orthonorm                                             &
+                  * xmn(m0 + moff:mmax + moff,-ntor + noff:ntor + noff)
+      CALL DGEMM('N', 'N', nu, 2*ntor + 1, mmax + 1, REAL(msign, dp),          &
+                 anglem1, nu, this%workmn, mmax + 1, zero, this%workin1, nu)
+      CALL DGEMM('N', 'N', nu, 2*ntor + 1, mmax + 1, one,                      &
+                 anglem2, nu, this%workmn, mmax + 1, zero, this%workin2, nu)
 
       IF (parity .eq. f_cos) THEN
          nsign3 = 1
@@ -983,26 +968,30 @@
 !  First do the n = 0 mode.
       IF (.not.BTEST(dflag, b_dv)) THEN
          IF (parity .eq. f_cos) THEN
-            DO j = 1, SIZE(xuv, 2) !  nzeta
+            DO j = 1, nj !  nzeta
                xuv(:,j) = this%workin1(:,n0) + xuv(:,j)
             END DO
          ELSE
-            DO j = 1, SIZE(xuv, 2) !  nzeta
+            DO j = 1, nj !  nzeta
                xuv(:,j) = this%workin2(:,n0) + xuv(:,j)
             END DO
          END IF
       END IF
 
-!  Sum over remaining toroidal modes.
-      DO n = n1, UBOUND(this%cosnv, 2) !  ntor
-         DO j = 1, SIZE(xuv, 2) !  nzeta
-            xuv(:,j) = xuv(:,j)                                                &
-                     + nsign1*(this%workin1(:,n) +                             &
-                               nsign3*this%workin1(:,-n))*anglen1(j,n)         &
-                     + nsign2*(this%workin2(:,n) -                             &
-                               nsign3*this%workin2(:,-n))*anglen2(j,n)
+!  Sum over remaining toroidal modes. Fold the -n modes into the n > 0 columns
+!  of the work buffers, then add both products to xuv.
+      IF (ntor .ge. n1) THEN
+         DO n = n1, ntor
+            this%workin1(:,n) = this%workin1(:,n) + nsign3*this%workin1(:,-n)
+            this%workin2(:,n) = this%workin2(:,n) - nsign3*this%workin2(:,-n)
          END DO
-      END DO
+         CALL DGEMM('N', 'T', nu, nj, ntor, REAL(nsign1, dp),                  &
+                    this%workin1(:,n1:ntor), nu, anglen1(:,n1:ntor),           &
+                    SIZE(anglen1, 1), one, xuv, nu)
+         CALL DGEMM('N', 'T', nu, nj, ntor, REAL(nsign2, dp),                  &
+                    this%workin2(:,n1:ntor), nu, anglen2(:,n1:ntor),           &
+                    SIZE(anglen2, 1), one, xuv, nu)
+      END IF
 
       END SUBROUTINE
 
@@ -1262,6 +1251,192 @@
       DEALLOCATE(result)
 
       DEALLOCATE(tor_modes)
+
+      END FUNCTION
+
+!-------------------------------------------------------------------------------
+!>  @brief Compare the transforms with direct sums over the Fourier basis.
+!>
+!>  Random coefficients and real space values at the size of a W7-X case are
+!>  transformed and checked against the sums of orthonorm*x*cos(mu + nv) and
+!>  orthonorm*x*sin(mu + nv) evaluated term by term, for both parities, the u
+!>  and v derivatives, the f_sum flag and both collocation grids.
+!>
+!>  @returns True if the transforms agree with the direct sums.
+!-------------------------------------------------------------------------------
+      FUNCTION test_fourier_direct()
+
+      IMPLICIT NONE
+
+!  Declare Arguments
+      LOGICAL                               :: test_fourier_direct
+
+!  Local variables
+      INTEGER                               :: m
+      INTEGER                               :: n
+      INTEGER                               :: i
+      INTEGER                               :: j
+      INTEGER                               :: js
+      INTEGER                               :: isym
+      INTEGER                               :: ipar
+      INTEGER                               :: iflag
+      INTEGER                               :: nu
+      INTEGER                               :: dflag
+      REAL(dp)                              :: u
+      REAL(dp)                              :: v
+      REAL(dp)                              :: arg
+      REAL(dp)                              :: fac
+      REAL(dp)                              :: w
+      REAL(dp)                              :: dnorm
+      REAL(dp)                              :: err
+      LOGICAL                               :: sym
+      REAL(dp), ALLOCATABLE, DIMENSION(:,:,:) :: xmn
+      REAL(dp), ALLOCATABLE, DIMENSION(:,:,:) :: ymn
+      REAL(dp), ALLOCATABLE, DIMENSION(:,:,:) :: zmn
+      REAL(dp), ALLOCATABLE, DIMENSION(:,:,:) :: xuv
+      REAL(dp), ALLOCATABLE, DIMENSION(:,:,:) :: yuv
+      CLASS (fourier_class), POINTER        :: four => null()
+      INTEGER, DIMENSION(-16:16)            :: tor_modes
+
+!  Local PARAMETERS
+      INTEGER, PARAMETER                    :: pol = 15
+      INTEGER, PARAMETER                    :: tor = 16
+      INTEGER, PARAMETER                    :: theta = 25
+      INTEGER, PARAMETER                    :: zeta = 52
+      INTEGER, PARAMETER                    :: nfp = 5
+      INTEGER, PARAMETER                    :: nsurf = 3
+      REAL(dp), PARAMETER                   :: tol = 1.E-12_dp
+      INTEGER, DIMENSION(4), PARAMETER      :: flags =                         &
+         (/ f_none, f_du, f_dv, f_sum /)
+
+!  Start of executable code.
+      test_fourier_direct = .true.
+      DO n = -tor, tor
+         tor_modes(n) = n
+      END DO
+
+      ALLOCATE(xmn(0:pol,-tor:tor,nsurf), ymn(0:pol,-tor:tor,nsurf),          &
+               zmn(0:pol,-tor:tor,nsurf))
+
+      DO isym = 0, 1
+         sym = isym .eq. 1
+         IF (sym) THEN
+            nu = theta
+            dnorm = one/(nu*zeta)
+         ELSE
+            nu = theta + 1
+            dnorm = one/((nu - 1)*zeta)
+         END IF
+         ALLOCATE(xuv(nu,zeta,nsurf), yuv(nu,zeta,nsurf))
+         four => fourier_class(pol, tor, nu, zeta, nfp, sym, tor_modes)
+
+         DO ipar = f_cos, f_sin
+            DO iflag = 1, SIZE(flags)
+               dflag = flags(iflag)
+               CALL RANDOM_NUMBER(xmn)
+               xmn = xmn - 0.5_dp
+               CALL RANDOM_NUMBER(xuv)
+               yuv = xuv
+
+!  Direct sum of the basis functions or their derivatives.
+               IF (.not.BTEST(dflag, b_sum)) THEN
+                  yuv = 0
+               END IF
+               DO js = 1, nsurf
+                  DO j = 1, zeta
+                     v = (twopi*(j - 1))/zeta
+                     DO i = 1, nu
+                        IF (sym) THEN
+                           u = (twopi*(i - 1))/nu
+                        ELSE
+                           u = (pi*(i - 1))/(nu - 1)
+                        END IF
+                        DO n = -tor, tor
+                           DO m = 0, pol
+                              arg = m*u + tor_modes(n)*v
+                              fac = four%orthonorm(m,n)*xmn(m,n,js)
+                              IF (BTEST(dflag, b_du)) THEN
+                                 fac = fac*m
+                              ELSE IF (BTEST(dflag, b_dv)) THEN
+                                 fac = fac*tor_modes(n)*nfp
+                              END IF
+                              IF (BTEST(dflag, b_du) .or.                      &
+                                  BTEST(dflag, b_dv)) THEN
+                                 IF (ipar .eq. f_cos) THEN
+                                    fac = -fac*SIN(arg)
+                                 ELSE
+                                    fac = fac*COS(arg)
+                                 END IF
+                              ELSE IF (ipar .eq. f_cos) THEN
+                                 fac = fac*COS(arg)
+                              ELSE
+                                 fac = fac*SIN(arg)
+                              END IF
+                              yuv(i,j,js) = yuv(i,j,js) + fac
+                           END DO
+                        END DO
+                     END DO
+                  END DO
+               END DO
+
+               CALL four%toijsp(xmn, xuv, dflag, ipar)
+               err = MAXVAL(ABS(xuv - yuv))/MAXVAL(ABS(yuv))
+               IF (err .gt. tol) THEN
+                  test_fourier_direct = .false.
+                  WRITE (*,1000) 'toijsp', isym, ipar, dflag, err
+               END IF
+            END DO
+
+!  Direct projection onto the basis, with the trapezoidal end weights of the
+!  non-symmetric grid. Modes the transform defines as zero stay zero.
+            CALL RANDOM_NUMBER(xuv)
+            zmn = 0
+            DO js = 1, nsurf
+               DO n = -tor, tor
+                  DO m = 0, pol
+                     IF (m .eq. 0 .and. n .lt. 0) CYCLE
+                     IF (m .eq. 0 .and. n .eq. 0 .and. ipar .eq. f_sin) CYCLE
+                     DO j = 1, zeta
+                        v = (twopi*(j - 1))/zeta
+                        DO i = 1, nu
+                           w = dnorm
+                           IF (sym) THEN
+                              u = (twopi*(i - 1))/nu
+                           ELSE
+                              u = (pi*(i - 1))/(nu - 1)
+                              IF (i .eq. 1 .or. i .eq. nu) w = 0.5_dp*w
+                           END IF
+                           arg = m*u + tor_modes(n)*v
+                           IF (ipar .eq. f_cos) THEN
+                              zmn(m,n,js) = zmn(m,n,js)                        &
+                                          + w*xuv(i,j,js)*COS(arg)
+                           ELSE
+                              zmn(m,n,js) = zmn(m,n,js)                        &
+                                          + w*xuv(i,j,js)*SIN(arg)
+                           END IF
+                        END DO
+                     END DO
+                     zmn(m,n,js) = four%orthonorm(m,n)*zmn(m,n,js)
+                  END DO
+               END DO
+            END DO
+
+            CALL four%tomnsp(xuv, ymn, ipar)
+            err = MAXVAL(ABS(ymn - zmn))/MAXVAL(ABS(zmn))
+            IF (err .gt. tol) THEN
+               test_fourier_direct = .false.
+               WRITE (*,1000) 'tomnsp', isym, ipar, f_none, err
+            END IF
+         END DO
+
+         DEALLOCATE(four)
+         DEALLOCATE(xuv, yuv)
+      END DO
+
+      DEALLOCATE(xmn, ymn, zmn)
+
+1000  FORMAT('fourier.f90: direct ',a,' sym = ',i1,' parity = ',i1,            &
+             ' flags = ',i2,' relative error ',es10.3)
 
       END FUNCTION
 

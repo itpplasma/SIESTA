@@ -162,7 +162,7 @@
              /,'STARTING EXTERNAL B-FIELD CALCULATION (PCHELMS)',              &
              /,'-----------------------------------------------')
 1001  FORMAT(' ASYMMETRY INDEX: ',1p,e12.4,/,                                  &
-             ' PCHELMS HESSIAN COMPUTATION TIME: ',f10.1,'s')
+             ' PCHELMS HESSIAN COMPUTATION TIME: ',0p,f10.1,'s')
 1002  FORMAT(' PCHELMS HESSIAN SOLVER TIME: ',f10.1,'s')
 1003  FORMAT(/,' |DivB| (normed) = ',1p,e12.3,/,                               &
              /,' SIESTA Curtor : ',e12.4,' VMEC Curtor : ',e12.4,              &
