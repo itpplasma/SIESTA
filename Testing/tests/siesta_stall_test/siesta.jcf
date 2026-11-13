@@ -1,0 +1,10 @@
+! Resistive free-boundary relaxation run past its attainable force residual
+! (FTOL below the round-off floor), so the Levenberg parameter is driven up.
+ &SIESTA_INFO
+ LADD_PERT = F, LRESISTIVE = T, ETA_FACTOR = 1.E-2, LRESTART = F, LRECON = F, LASYM = F, LCOLSCALE = T,
+ NITER = 2000, FTOL = 1.E-20, LEVMARQ_PARAM = 1.0E-1, MUPAR = 0.0,
+ NSIN = 17, NSIN_EXT = 20, MPOLIN = 4, NTORIN = 3, NFPIN = 0,
+ L_VESSEL = T, EXT_EDGE_FAC = 0.25, VESSEL_FILE = 'vessel.test', MGRID_FILE = 'mgrid_test.nc',
+ WOUT_FILE = '@CMAKE_CURRENT_BINARY_DIR@/wout_test.vmec.nc', RESTART_EXT = 'test',
+ L_TRACING = F,
+ /

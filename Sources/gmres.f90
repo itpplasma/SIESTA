@@ -405,7 +405,8 @@
 
       DEALLOCATE (p)
 
-      WHERE (ABS(Ap) .LT. 1.E-10_dp) Ap = 0
+!  A nonzero Krylov vector may have a product below 1.E-10. Truncating it
+!  to zero makes the Arnoldi normalization divide by zero.
 
       CALL second0(skstoff)
 
@@ -454,7 +455,6 @@
          Ap = (gc-gc0)/delta
       END IF
 
-      WHERE (ABS(Ap) .LT. 1.E-10_dp) Ap = 0
 
       END SUBROUTINE matvec
 
