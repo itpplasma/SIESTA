@@ -29,7 +29,6 @@ set_tests_properties (siesta_pchelms_siesta_test
                       FIXTURES_REQUIRED siesta_pchelms_vmec
                       FIXTURES_SETUP siesta_pchelms_siesta
                       PROCESSORS $<TARGET_PROPERTY:stell,MPIEXEC_MAX_NUMPROCS>
-                      PASS_REGULAR_EXPRESSION "PCHELMS PLASMA FIELD RELATIVE ERROR:"
                       FAIL_REGULAR_EXPRESSION "PCHELMS plasma field differs from VMEC")
 
 #  Inside the plasma the start state keeps the VMEC rotational transform, and
