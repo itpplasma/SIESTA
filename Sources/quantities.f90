@@ -466,7 +466,7 @@
       SUBROUTINE Init_Bfield(jbsupsmnh, jbsupumnh, jbsupvmnh,                  &
                              lmn, phiph, chiph, nsmin, nsmax, parity)
       USE fourier, ONLY: m0, m1, n0, f_sin, f_jac
-      USE siesta_namelist, ONLY: l_vessel
+      USE siesta_namelist, ONLY: l_vessel, nsin
       USE utilities, ONLY: set_bndy_fouier_m0, set_bndy_full_origin
       USE island_params, ONLY: fourier_context
 
@@ -499,9 +499,11 @@
          sparity = -1
       END IF
 
-      IF (.not.l_vessel) THEN
-
-         DO i = nsmin, nsmax
+!  With a vessel, PCHELMS supplies the vacuum field outside the plasma; inside,
+!  the field is VMEC's, as without a vessel.
+      DO i = nsmin, nsmax
+         IF (.not.l_vessel .or. i .le. nsin) THEN
+            jbsupsmnh(:,:,i) = 0
             DO n = -ntor, ntor
                n_mode = fourier_context%tor_modes(n)
                np = n_mode*nfp*sparity
@@ -518,8 +520,9 @@
                jbsupvmnh(m0,n0,i) = phiph(i)                                   &
                                   / fourier_context%orthonorm(m0,n0)
             END IF
-         END DO
-
+         END IF
+      END DO
+      IF (.not.l_vessel) THEN
          jbsupsmnh = 0
       END IF
         
