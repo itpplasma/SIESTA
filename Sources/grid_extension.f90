@@ -181,8 +181,8 @@
          fac = ext_edge_fac_limit(ext_edge_fac, r1_vmec, z1_vmec, ru_vmec,        &
                                   zu_vmec, r1s_vmec, z1s_vmec, r1su_vmec,         &
                                   z1su_vmec, r1_ves, z1_ves, ru_ves, zu_ves)
-         CALL assert(fac .gt. zero, 'Vessel extension folds for every '  //       &
-                     'EXT_EDGE_FAC; check the vessel parametrisation.')
+         CALL assert(fac .gt. zero, 'No tested EXT_EDGE_FAC preserves the '  //       &
+                     'sampled Jacobian orientation; check the vessel.')
          IF (fac .lt. ext_edge_fac .and. lverbose .and. iam .eq. 0) THEN
             WRITE (*,1001) ext_edge_fac, fac
          END IF
@@ -252,7 +252,7 @@
              'Number of VMEC surfaces ',i4,/,                                  &
              'Number of extended surfaces ',i4)
 1001  FORMAT('EXT_EDGE_FAC reduced from ',f6.3,' to ',f6.3,                    &
-             ' to keep the vessel extension from folding.')
+             ' to preserve the sampled vessel-grid orientation.')
 
 !  Assign the new value of ns.
 ! REASSIGN THE NEW VALUE OF NS
@@ -407,15 +407,15 @@
       END SUBROUTINE
 
 !-------------------------------------------------------------------------------
-!>  @brief Largest safe edge factor of the quadratic vessel extension.
+!>  @brief Edge factor with one-signed sampled vessel-extension Jacobian.
 !>
 !>  The extension X(rho) = f*X_s*rho*(1 - rho) + X_0*(1 - rho^2) + X_w*rho^2
 !>  matches the slope f*X_s at the plasma edge (rho = 0) and reaches the wall
 !>  (rho = 1) with slope 2*(X_w - X_0) - f*X_s. Where f*X_s exceeds twice the
 !>  plasma-wall gap the cross-section Jacobian X_rho x X_u changes sign and the
 !>  grid folds. This returns the largest f = fac_max*k/nfac, k = nfac..1, for
-!>  which the Jacobian keeps the sign of the plasma edge on 0 < rho <= 1, or 0
-!>  if none does.
+!>  which the Jacobian keeps the plasma-edge sign on the angular grid and 100
+!>  radial samples in 0 < rho <= 1, or 0 if no tested factor does.
 !>
 !>  @param[in] fac_max Requested edge factor.
 !>  @param[in] r0      R on the plasma edge.
