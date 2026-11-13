@@ -1,0 +1,9 @@
+! Free-boundary start state with 43 kA of plasma current; vessel 3 cm outside.
+ &SIESTA_INFO
+ LADD_PERT = F, LRESISTIVE = F, LRESTART = F, LRECON = F, LASYM = F, LCOLSCALE = T,
+ NITER = 1, FTOL = 1.E-20, LEVMARQ_PARAM = 1.0E-1, MUPAR = 0.0,
+ NSIN = 25, NSIN_EXT = 20, MPOLIN = 5, NTORIN = 4, NFPIN = 0,
+ L_VESSEL = T, EXT_EDGE_FAC = 0.25, VESSEL_FILE = 'vessel.test', MGRID_FILE = 'mgrid_test.nc',
+ WOUT_FILE = '@CMAKE_CURRENT_BINARY_DIR@/wout_test.vmec.nc', RESTART_EXT = 'test',
+ L_TRACING = F,
+ /
