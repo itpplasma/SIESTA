@@ -59,9 +59,9 @@
 !>  @table_section{siesta_grid_size_sec, Grid Sizes}
 !>     @item{nsin,       Size of plasma radial grid.,                            siesta_namelist::nsin}
 !>     @item{nsin_ext,   Size of extended radial grid.,                          siesta_namelist::nsin_ext}
-!>     @item{ext_edge_fac, Scale of the edge radial derivative in the quadratic
-!>                       extension to the vessel; lower it if the extended grid
-!>                       folds.,                                                 siesta_namelist::ext_edge_fac}
+!>     @item{ext_edge_fac, Largest scale of the edge radial derivative in the
+!>                       quadratic extension to the vessel; lowered
+!>                       automatically when sampled quadratic-grid orientation fails.,     siesta_namelist::ext_edge_fac}
 !>     @item{ntor_type,  Type of toroidal modes. Available types are
 !>                       -# @fixed_width{'dense'}  Use all toroidal modes.
 !>                       -# @fixed_width{'sparse'} Use selected toroidal modes., siesta_namelist::ntor_type}
