@@ -327,10 +327,10 @@
                      zmnc_i(0:mpol,-ntor:ntor,ns), stat=istat)
             rmns_i(:,:,1:nsp) = tmp(:,:,1:nsp)
             zmnc_i(:,:,1:nsp) = tmp2(:,:,1:nsp)
-            CALL fourier_context%tomnsp(r_ext(:,:,1:nsin_ext),                 &
+            CALL fourier_context%tomnsp(r_ext(:,:,2:nsin_ext + 1),             &
      &                                  rmns_i(:,:,nsp1:ns), f_sin)
-            CALL fourier_context%tomnsp(z1_i(:,:,nsp1:ns),                     &
-     &                                  z_ext(:,:,1:nsin_ext), f_cos)
+            CALL fourier_context%tomnsp(z_ext(:,:,2:nsin_ext + 1),             &
+     &                                  zmnc_i(:,:,nsp1:ns), f_cos)
 
             tmp = 0
             tmp(:,:,1:nsp)=jcurrumns
