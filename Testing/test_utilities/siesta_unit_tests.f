@@ -17,6 +17,7 @@
 !-------------------------------------------------------------------------------
       PROGRAM siesta_unit_tests
       USE fourier
+      USE grid_extension, ONLY: test_grid_extension
 
       IMPLICIT NONE
 
@@ -27,6 +28,11 @@
       test_passed = test_fourier()
       IF (.not.test_passed) THEN
          WRITE (*,*) 'test_fourier failed.'
+      END IF
+
+      IF (.not.test_grid_extension()) THEN
+         WRITE (*,*) 'test_grid_extension failed.'
+         test_passed = .false.
       END IF
 
       IF (.not.test_passed) THEN
