@@ -61,6 +61,9 @@
 !>  VMEC flux functions as the (0,0) A_u and A_v inside the plasma.
       REAL (dp), DIMENSION(:), ALLOCATABLE, PRIVATE :: au00_vmec
       REAL (dp), DIMENSION(:), ALLOCATABLE, PRIVATE :: av00_vmec
+!>  Full-mesh radial potential whose average recovers the VMEC lambda field.
+      REAL (dp), DIMENSION(:,:,:), ALLOCATABLE, PRIVATE :: as_vmec
+      REAL (dp), DIMENSION(:,:,:), ALLOCATABLE, PRIVATE :: as_asym_vmec
 
       REAL (dp), DIMENSION(:,:,:), ALLOCATABLE, PRIVATE :: Bsupsijh
       REAL (dp), DIMENSION(:,:,:), ALLOCATABLE, PRIVATE :: Bsupuijh
@@ -250,11 +253,18 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
          asubsmnf(:,:,:MIN(nsin, nsmax)) = 0
          asubumnf(:,:,:MIN(nsin, nsmax)) = 0
          asubvmnf(:,:,:MIN(nsin, nsmax)) = 0
-         IF (l_total .and. parity .eq. f_sin) THEN
-            asubumnf(m0 + moff,n0 + noff,:MIN(nsin, nsmax)) =                  &
-               au00_vmec(:MIN(nsin, nsmax))
-            asubvmnf(m0 + moff,n0 + noff,:MIN(nsin, nsmax)) =                  &
-               av00_vmec(:MIN(nsin, nsmax))
+         IF (l_total) THEN
+            IF (parity .eq. f_sin) THEN
+               asubsmnf(:,:,:MIN(nsin, nsmax)) =                              &
+                  as_vmec(:,:,:MIN(nsin, nsmax))
+               asubumnf(m0 + moff,n0 + noff,:MIN(nsin, nsmax)) =               &
+                  au00_vmec(:MIN(nsin, nsmax))
+               asubvmnf(m0 + moff,n0 + noff,:MIN(nsin, nsmax)) =               &
+                  av00_vmec(:MIN(nsin, nsmax))
+            ELSE
+               asubsmnf(:,:,:MIN(nsin, nsmax)) =                              &
+                  as_asym_vmec(:,:,:MIN(nsin, nsmax))
+            END IF
          END IF
       END IF
 
@@ -655,29 +665,42 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
       SUBROUTINE INIT_A_VMEC
       USE metrics, ONLY: phipf_i, chipf_i
       USE quantities, ONLY: signjac
-      USE vmec_info, ONLY: iflipj
+      USE vmec_info, ONLY: iflipj, lmns_i, lmnc_i
       USE island_params, ONLY: fourier_context
       USE siesta_namelist, ONLY: nsin
+      USE shared_data, ONLY: lasym
 
       IMPLICIT NONE
 
 !  local variables
       INTEGER   :: js
       REAL (dp) :: fac
+      REAL (dp) :: phiph
 
 !  Start of executable code
-      IF (.not.ALLOCATED(au00_vmec)) THEN
-         ALLOCATE(au00_vmec(nsin), av00_vmec(nsin))
+      ALLOCATE(au00_vmec(nsin), av00_vmec(nsin))
+      ALLOCATE(as_vmec(0:mpol,-ntor:ntor,nsin))
+      IF (lasym) THEN
+         ALLOCATE(as_asym_vmec(0:mpol,-ntor:ntor,nsin))
+         as_asym_vmec(:,:,1) = 0
       END IF
 
       fac = signjac*iflipj/fourier_context%orthonorm(m0,n0)
       au00_vmec(1) = 0
       av00_vmec(1) = 0
+      as_vmec(:,:,1) = 0
       DO js = 2, nsin
          au00_vmec(js) = au00_vmec(js - 1)                                     &
                        + hs*fac*(phipf_i(js) + phipf_i(js - 1))/2
          av00_vmec(js) = av00_vmec(js - 1)                                     &
                        - hs*fac*(chipf_i(js) + chipf_i(js - 1))/2
+!  curl_ftoh averages A_s to the half mesh; retain its VMEC lambda term.
+         phiph = signjac*iflipj*(phipf_i(js) + phipf_i(js - 1))/2
+         as_vmec(:,:,js) = -2*phiph*lmns_i(:,:,js) - as_vmec(:,:,js - 1)
+         IF (lasym) THEN
+            as_asym_vmec(:,:,js) = -2*phiph*lmnc_i(:,:,js)                     &
+                                - as_asym_vmec(:,:,js - 1)
+         END IF
       END DO
 
       asubumncf(m0 + LBOUND(asubumncf,1),n0 + ntor + LBOUND(asubumncf,2),ns) = &
@@ -1194,6 +1217,11 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
 
 !  Start of executable code
       DEALLOCATE(xc0, gc0)
+      DEALLOCATE(au00_vmec, av00_vmec, as_vmec)
+      IF (ALLOCATED(as_asym_vmec)) THEN
+         DEALLOCATE(as_asym_vmec)
+      END IF
+      bnorm = -1
 
       IF (ALLOCATED(jacobmnch)) THEN
          DEALLOCATE(jacobmnch)
@@ -1273,6 +1301,8 @@ REAL (dp), DIMENSION(:,:,:), ALLOCATABLE :: divf
 
       CALL COMPUTE_FORCES(.TRUE.)
       CALL gather_array(gc)
+!  CURLA_PCHELMS also sets held plasma entries on each rank.
+      CALL gather_array(xc)
 
       IF (iam .EQ. 0) THEN
          WRITE(*,1000) fsq_total, MAXVAL(ABS(gc)), SQRT(SUM(xc*xc))
