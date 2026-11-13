@@ -215,10 +215,10 @@
          l_iterate = niter      .lt. niter_max .and.                           &
                      fsq_total1 .gt. ftol
 
-!  The restart file already holds the state of least force residual.
          IF (l_stalled) THEN
-            IF (iam .eq. 0 .and. lverbose) THEN
+            IF (iam .eq. 0) THEN
                WRITE (*,1002) fsq_min
+               WRITE (unit_out,1002) fsq_min
             END IF
             l_iterate = .false.
          END IF
@@ -447,7 +447,7 @@
 			failed_min_count = failed_min_count + 1	
             IF (failed_min_count .eq. 3) THEN
 !  The Levenberg parameter grows to its maximum and no further: with MAX it
-!  grew without bound and the preconditioned step underflowed to NaN.
+!  grew without bound, leading to invalid Arnoldi normalization.
 				l_stalled = levmarq_param0 .ge. levmarq_max
 				levmarq_param0 = MIN(levmarq_param0*3,levmarq_max)
 				failed_min_count = 0
