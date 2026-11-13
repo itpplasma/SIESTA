@@ -50,6 +50,7 @@
   
       REAL(dp), ALLOCATABLE, DIMENSION(:,:) :: r1s_vmec, r1ss_vmec
       REAL(dp), ALLOCATABLE, DIMENSION(:,:) :: z1s_vmec, z1ss_vmec
+      REAL(dp), ALLOCATABLE, DIMENSION(:,:) :: r1su_vmec, z1su_vmec
 
       REAL(dp), ALLOCATABLE, DIMENSION(:,:) :: rmnc_v, zmns_v
       REAL(dp), ALLOCATABLE, DIMENSION(:,:) :: rmns_v, zmnc_v
@@ -80,7 +81,7 @@
       USE vmec_info, ONLY: rmnc_i, rmns_i, zmns_i, zmnc_i,                     &
                            jcurrumnc, jcurrvmnc, jcurrumns, jcurrvmns
       USE descriptor_mod, ONLY: SIESTA_COMM
-      USE siesta_namelist, ONLY: nsin_ext
+      USE siesta_namelist, ONLY: nsin_ext, ext_edge_fac
       USE shared_data, ONLY: lverbose
       USE island_params, ONLY: fourier_context
       USE metrics, ONLY: LoadGrid
@@ -126,6 +127,9 @@
       REAL(dp), DIMENSION(:), ALLOCATABLE     :: tmp1
 
       INTEGER, DIMENSION(:), ALLOCATABLE      :: vtor_modes
+      REAL(dp)                                :: fac
+      REAL(dp), DIMENSION(:,:), ALLOCATABLE   :: ru_ves
+      REAL(dp), DIMENSION(:,:), ALLOCATABLE   :: zu_ves
 
       CLASS (fourier_class), POINTER          :: four => null()
 
@@ -164,8 +168,28 @@
 !  FIXME: What about non stellarator symmetric vessels?
       CALL four%toijsp(rmnc_v, r1_ves, f_none, f_cos)
       CALL four%toijsp(zmns_v, z1_ves, f_none, f_sin)
+      ALLOCATE(ru_ves(ntheta,nzeta), zu_ves(ntheta,nzeta))
+      CALL four%toijsp(rmnc_v, ru_ves, f_du, f_cos)
+      CALL four%toijsp(zmns_v, zu_ves, f_du, f_sin)
 
       DEALLOCATE(four)
+
+!  The quadratic blend reaches the wall with slope 2*(X_ves - X_vmec) - fac*X_s,
+!  so a large fac compared with the plasma-wall gap folds the grid.
+      fac = ext_edge_fac
+      IF (interp_type .eq. QUAD) THEN
+         fac = ext_edge_fac_limit(ext_edge_fac, r1_vmec, z1_vmec, ru_vmec,        &
+                                  zu_vmec, r1s_vmec, z1s_vmec, r1su_vmec,         &
+                                  z1su_vmec, r1_ves, z1_ves, ru_ves, zu_ves)
+         CALL assert(fac .gt. zero, 'No tested EXT_EDGE_FAC preserves the '  //       &
+                     'sampled Jacobian orientation; check the vessel.')
+         IF (fac .lt. ext_edge_fac .and. lverbose .and. iam .eq. 0) THEN
+            WRITE (*,1001) ext_edge_fac, fac
+         END IF
+      END IF
+      r1s_vmec = fac*r1s_vmec
+      z1s_vmec = fac*z1s_vmec
+      DEALLOCATE(ru_ves, zu_ves, r1su_vmec, z1su_vmec)
 
 !  Compute extended "s" coordinate for s>1, assuming Vp(s) = Vp(s=1)*s
 !  where Vp(s=1) is obtained from extrapolating VMEC values. Results is
@@ -227,6 +251,8 @@
 1000  FORMAT('Using ',i4,' Total Surfaces.',/,                                 &
              'Number of VMEC surfaces ',i4,/,                                  &
              'Number of extended surfaces ',i4)
+1001  FORMAT('EXT_EDGE_FAC reduced from ',f6.3,' to ',f6.3,                    &
+             ' to preserve the sampled vessel-grid orientation.')
 
 !  Assign the new value of ns.
 ! REASSIGN THE NEW VALUE OF NS
@@ -360,12 +386,7 @@
 !-------------------------------------------------------------------------------
       SUBROUTINE init_extender
 
-      USE siesta_namelist, ONLY: ext_edge_fac
-
       IMPLICIT NONE
-
-!  Local Variables.
-      REAL(dp) :: fac
 
 !  Start of executable code.
       ALLOCATE(r1_vmec(ntheta,nzeta),z1_vmec(ntheta,nzeta))
@@ -375,16 +396,89 @@
       ru_vmec = ru_i(:,:,ns); zu_vmec(:,:) = zu_i(:,:,ns)
       rv_vmec = rv_i(:,:,ns); zv_vmec(:,:) = zv_i(:,:,ns)
 
-!  First derivatives on s=1 surface
+!  First derivatives on s=1 surface, scaled by the edge factor in grid_extender
       ALLOCATE(r1s_vmec(ntheta,nzeta),z1s_vmec(ntheta,nzeta))
-
-!  Too large a factor folds the grid near the vessel when the plasma-vessel gap
-!  is small compared with the edge derivative.
-      fac = ext_edge_fac
-      r1s_vmec=(r1_vmec - r1_i(:,:,ns-1))*ohs*fac
-      z1s_vmec=(z1_vmec - z1_i(:,:,ns-1))*ohs*fac
+      ALLOCATE(r1su_vmec(ntheta,nzeta),z1su_vmec(ntheta,nzeta))
+      r1s_vmec=(r1_vmec - r1_i(:,:,ns-1))*ohs
+      z1s_vmec=(z1_vmec - z1_i(:,:,ns-1))*ohs
+      r1su_vmec=(ru_vmec - ru_i(:,:,ns-1))*ohs
+      z1su_vmec=(zu_vmec - zu_i(:,:,ns-1))*ohs
 
       END SUBROUTINE
+
+!-------------------------------------------------------------------------------
+!>  @brief Edge factor with one-signed sampled vessel-extension Jacobian.
+!>
+!>  The extension X(rho) = f*X_s*rho*(1 - rho) + X_0*(1 - rho^2) + X_w*rho^2
+!>  matches the slope f*X_s at the plasma edge (rho = 0) and reaches the wall
+!>  (rho = 1) with slope 2*(X_w - X_0) - f*X_s. Where f*X_s exceeds twice the
+!>  plasma-wall gap the cross-section Jacobian X_rho x X_u changes sign and the
+!>  grid folds. This returns the largest f = fac_max*k/nfac, k = nfac..1, for
+!>  which the Jacobian keeps the plasma-edge sign on the angular grid and 100
+!>  radial samples in 0 < rho <= 1, or 0 if no tested factor does.
+!>
+!>  @param[in] fac_max Requested edge factor.
+!>  @param[in] r0      R on the plasma edge.
+!>  @param[in] z0      Z on the plasma edge.
+!>  @param[in] r0u     dR/du on the plasma edge.
+!>  @param[in] z0u     dZ/du on the plasma edge.
+!>  @param[in] rs      dR/ds on the plasma edge.
+!>  @param[in] zs      dZ/ds on the plasma edge.
+!>  @param[in] rsu     d^2R/dsdu on the plasma edge.
+!>  @param[in] zsu     d^2Z/dsdu on the plasma edge.
+!>  @param[in] rw      R on the wall.
+!>  @param[in] zw      Z on the wall.
+!>  @param[in] rwu     dR/du on the wall.
+!>  @param[in] zwu     dZ/du on the wall.
+!>  @returns The edge factor.
+!-------------------------------------------------------------------------------
+      PURE FUNCTION ext_edge_fac_limit(fac_max, r0, z0, r0u, z0u, rs, zs,      &
+                                       rsu, zsu, rw, zw, rwu, zwu)
+      IMPLICIT NONE
+
+!  Declare Arguments
+      REAL(dp)                             :: ext_edge_fac_limit
+      REAL(dp), INTENT(in)                 :: fac_max
+      REAL(dp), DIMENSION(:,:), INTENT(in) :: r0, z0, r0u, z0u, rs, zs
+      REAL(dp), DIMENSION(:,:), INTENT(in) :: rsu, zsu, rw, zw, rwu, zwu
+
+!  Local Variables
+      INTEGER                              :: k
+      INTEGER                              :: i
+      LOGICAL                              :: folds
+      REAL(dp)                             :: f
+      REAL(dp)                             :: rho
+      REAL(dp)                             :: sgn
+      REAL(dp), DIMENSION(SIZE(r0,1),SIZE(r0,2)) :: rr, zr, ru, zu
+
+!  Local Parameters
+      INTEGER, PARAMETER                   :: nfac = 50
+      INTEGER, PARAMETER                   :: nrho = 100
+
+!  Start of executable code.
+      sgn = SIGN(1.0_dp, SUM(rs*z0u - r0u*zs))
+      ext_edge_fac_limit = 0
+      DO k = nfac, 1, -1
+         f = fac_max*k/nfac
+         folds = .false.
+         DO i = 1, nrho
+            rho = REAL(i, dp)/nrho
+            rr = f*rs*(1 - 2*rho) + 2*rho*(rw - r0)
+            zr = f*zs*(1 - 2*rho) + 2*rho*(zw - z0)
+            ru = f*rsu*rho*(1 - rho) + r0u*(1 - rho*rho) + rwu*rho*rho
+            zu = f*zsu*rho*(1 - rho) + z0u*(1 - rho*rho) + zwu*rho*rho
+            IF (ANY(sgn*(rr*zu - ru*zr) .le. 0)) THEN
+               folds = .true.
+               EXIT
+            END IF
+         END DO
+         IF (.not.folds) THEN
+            ext_edge_fac_limit = f
+            RETURN
+         END IF
+      END DO
+
+      END FUNCTION
 
 !-------------------------------------------------------------------------------
 !>  @brief UNKNOWN
@@ -680,5 +774,65 @@
       DEALLOCATE(wint)
 
       END SUBROUTINE
+
+!*******************************************************************************
+!  UNIT TESTS
+!*******************************************************************************
+!-------------------------------------------------------------------------------
+!>  @brief Test the edge factor limit of the vessel extension.
+!>
+!>  Circular plasma edge of minor radius a inside a concentric circular wall of
+!>  radius a + d. The blend slope along the minor radius is f*a*(1 - 2*rho) +
+!>  2*d*rho, so the grid folds at the wall exactly when f >= 2*d/a.
+!>
+!>  @returns True if the test passes.
+!-------------------------------------------------------------------------------
+      FUNCTION test_grid_extension()
+
+      IMPLICIT NONE
+
+!  Declare Arguments
+      LOGICAL                         :: test_grid_extension
+
+!  Local Variables
+      INTEGER                         :: i
+      REAL(dp), DIMENSION(32,1)       :: cu, su, r0, z0, r0u, z0u
+      REAL(dp), DIMENSION(32,1)       :: rs, zs, rsu, zsu, rw, zw, rwu, zwu
+      REAL(dp)                        :: fac
+
+!  Local Parameters
+      REAL(dp), PARAMETER             :: rmaj = 3.0_dp
+      REAL(dp), PARAMETER             :: a = 0.5_dp
+      REAL(dp), PARAMETER             :: d = 0.10125_dp
+
+!  Start of executable code.
+      DO i = 1, 32
+         cu(i,1) = COS(twopi*(i - 1)/32)
+         su(i,1) = SIN(twopi*(i - 1)/32)
+      END DO
+      r0 = rmaj + a*cu;        z0 = a*su
+      r0u = -a*su;             z0u = a*cu
+      rs = a*cu;               zs = a*su
+      rsu = -a*su;             zsu = a*cu
+      rw = rmaj + (a + d)*cu;  zw = (a + d)*su
+      rwu = -(a + d)*su;       zwu = (a + d)*cu
+
+!  The default 0.5 folds this grid; 2d/a = 0.405 lies between two steps.
+      fac = ext_edge_fac_limit(0.5_dp, r0, z0, r0u, z0u, rs, zs, rsu, zsu,     &
+                               rw, zw, rwu, zwu)
+      test_grid_extension = ABS(fac - 0.40_dp) .lt. 1.0E-12_dp
+      IF (.not.test_grid_extension) THEN
+         WRITE (*,*) 'ext_edge_fac_limit(0.5): expected 0.40, got ', fac
+      END IF
+
+!  A factor below 2d/a is kept.
+      fac = ext_edge_fac_limit(0.25_dp, r0, z0, r0u, z0u, rs, zs, rsu, zsu,    &
+                               rw, zw, rwu, zwu)
+      IF (fac .ne. 0.25_dp) THEN
+         WRITE (*,*) 'ext_edge_fac_limit(0.25): expected 0.25, got ', fac
+         test_grid_extension = .false.
+      END IF
+
+      END FUNCTION
 
       END MODULE
