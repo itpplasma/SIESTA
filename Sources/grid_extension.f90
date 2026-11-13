@@ -176,13 +176,16 @@
 
 !  The quadratic blend reaches the wall with slope 2*(X_ves - X_vmec) - fac*X_s,
 !  so a large fac compared with the plasma-wall gap folds the grid.
-      fac = ext_edge_fac_limit(ext_edge_fac, r1_vmec, z1_vmec, ru_vmec,        &
-                               zu_vmec, r1s_vmec, z1s_vmec, r1su_vmec,         &
-                               z1su_vmec, r1_ves, z1_ves, ru_ves, zu_ves)
-      CALL assert(fac .gt. zero, 'Vessel extension folds for every '  //       &
-                  'EXT_EDGE_FAC; check the vessel parametrisation.')
-      IF (fac .lt. ext_edge_fac .and. lverbose .and. iam .eq. 0) THEN
-         WRITE (*,1001) ext_edge_fac, fac
+      fac = ext_edge_fac
+      IF (interp_type .eq. QUAD) THEN
+         fac = ext_edge_fac_limit(ext_edge_fac, r1_vmec, z1_vmec, ru_vmec,        &
+                                  zu_vmec, r1s_vmec, z1s_vmec, r1su_vmec,         &
+                                  z1su_vmec, r1_ves, z1_ves, ru_ves, zu_ves)
+         CALL assert(fac .gt. zero, 'Vessel extension folds for every '  //       &
+                     'EXT_EDGE_FAC; check the vessel parametrisation.')
+         IF (fac .lt. ext_edge_fac .and. lverbose .and. iam .eq. 0) THEN
+            WRITE (*,1001) ext_edge_fac, fac
+         END IF
       END IF
       r1s_vmec = fac*r1s_vmec
       z1s_vmec = fac*z1s_vmec
