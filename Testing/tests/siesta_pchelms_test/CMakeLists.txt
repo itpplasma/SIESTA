@@ -1,7 +1,9 @@
 #  Copy input files from the source to the build directory.
-configure_file (${CMAKE_CURRENT_SOURCE_DIR}/siesta.jcf
-                ${CMAKE_CURRENT_BINARY_DIR}/siesta.jcf
-                @ONLY)
+foreach (file siesta.jcf siesta_radial.jcf)
+    configure_file (${CMAKE_CURRENT_SOURCE_DIR}/${file}
+                    ${CMAKE_CURRENT_BINARY_DIR}/${file}
+                    @ONLY)
+endforeach ()
 foreach (file coils.test input.test.vmec vessel.test)
     configure_file (${CMAKE_CURRENT_SOURCE_DIR}/${file}
                     ${CMAKE_CURRENT_BINARY_DIR}/${file}
@@ -45,3 +47,20 @@ set_tests_properties (siesta_pchelms_curtor_test
                       PROPERTIES
                       DEPENDS siesta_pchelms_siesta_test
                       FIXTURES_REQUIRED siesta_pchelms_siesta)
+
+#  On a finer radial grid the exterior solve needs more iterations; the
+#  enclosed current must still be the VMEC current.
+add_test (NAME    siesta_pchelms_radial_siesta_test
+          COMMAND $<TARGET_PROPERTY:stell,MPIEXEC_EXECUTABLE> $<TARGET_PROPERTY:stell,MPIEXEC_NUMPROC_FLAG> $<TARGET_PROPERTY:stell,MPIEXEC_MAX_NUMPROCS> $<TARGET_PROPERTY:xsiesta,BINARY_DIR>/xsiesta radial)
+set_tests_properties (siesta_pchelms_radial_siesta_test
+                      PROPERTIES
+                      DEPENDS siesta_pchelms_siesta_test
+                      FIXTURES_REQUIRED siesta_pchelms_vmec
+                      FIXTURES_SETUP siesta_pchelms_radial
+                      PROCESSORS $<TARGET_PROPERTY:stell,MPIEXEC_MAX_NUMPROCS>)
+add_test (NAME    siesta_pchelms_radial_curtor_test
+          COMMAND $<TARGET_PROPERTY:xsiesta_test,BINARY_DIR>/xsiesta_test -wout_file=${CMAKE_CURRENT_BINARY_DIR}/wout_test.vmec.nc -restart_file=${CMAKE_CURRENT_BINARY_DIR}/siesta_radial.nc -test_name=curtor -tol=2.0E-2 -relative)
+set_tests_properties (siesta_pchelms_radial_curtor_test
+                      PROPERTIES
+                      DEPENDS siesta_pchelms_radial_siesta_test
+                      FIXTURES_REQUIRED siesta_pchelms_radial)
